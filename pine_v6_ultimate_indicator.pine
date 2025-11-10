@@ -1,0 +1,281 @@
+//@version=6
+indicator("Ultimate Multi-Module Indicator v6", shorttitle="UMI v6", overlay=true, max_bars_back=500)
+
+// ============================================================================
+// SECTION 1: PARAMÈTRES D'ENTRÉE / INPUT PARAMETERS
+// ============================================================================
+
+// --- Paramètres généraux ---
+string timeframeInput = input.timeframe("", "Multi-Timeframe Analysis", group="Général")
+bool showTrend = input.bool(true, "Afficher Tendance", group="Général")
+bool showVolume = input.bool(true, "Afficher Volume", group="Général")
+bool showSupRes = input.bool(true, "Afficher Support/Résistance", group="Général")
+bool showSignals = input.bool(true, "Afficher Signaux", group="Général")
+
+// --- Paramètres de Tendance ---
+int maPeriod1 = input.int(20, "MA Rapide Période", minval=1, group="Tendance")
+int maPeriod2 = input.int(50, "MA Moyenne Période", minval=1, group="Tendance")
+int maPeriod3 = input.int(200, "MA Lente Période", minval=1, group="Tendance")
+string maType = input.string("EMA", "Type de MA", options=["SMA", "EMA", "WMA"], group="Tendance")
+
+// --- Paramètres RSI ---
+int rsiPeriod = input.int(14, "Période RSI", minval=1, group="Oscillateurs")
+int rsiOverbought = input.int(70, "RSI Suracheté", minval=50, maxval=100, group="Oscillateurs")
+int rsiOversold = input.int(30, "RSI Survendu", minval=0, maxval=50, group="Oscillateurs")
+
+// --- Paramètres MACD ---
+int macdFast = input.int(12, "MACD Rapide", minval=1, group="Oscillateurs")
+int macdSlow = input.int(26, "MACD Lent", minval=1, group="Oscillateurs")
+int macdSignal = input.int(9, "MACD Signal", minval=1, group="Oscillateurs")
+
+// --- Paramètres de Volume ---
+int volumeMA = input.int(20, "Volume MA Période", minval=1, group="Volume")
+float volumeMultiplier = input.float(1.5, "Volume Multiplier", minval=0.1, group="Volume")
+
+// --- Paramètres Support/Résistance ---
+int pivotLeftBars = input.int(10, "Pivot Left Bars", minval=1, group="Support/Résistance")
+int pivotRightBars = input.int(10, "Pivot Right Bars", minval=1, group="Support/Résistance")
+
+// --- Couleurs ---
+color colorBullish = input.color(color.new(color.green, 0), "Couleur Haussière", group="Couleurs")
+color colorBearish = input.color(color.new(color.red, 0), "Couleur Baissière", group="Couleurs")
+color colorNeutral = input.color(color.new(color.gray, 0), "Couleur Neutre", group="Couleurs")
+
+// ============================================================================
+// SECTION 2: FONCTIONS UTILITAIRES / UTILITY FUNCTIONS
+// ============================================================================
+
+// Fonction pour calculer MA selon le type
+f_ma(float src, int length, string type) =>
+    switch type
+        "SMA" => ta.sma(src, length)
+        "EMA" => ta.ema(src, length)
+        "WMA" => ta.wma(src, length)
+        => ta.ema(src, length)
+
+// Fonction pour détecter la tendance
+f_getTrend(float ma1, float ma2, float ma3) =>
+    if ma1 > ma2 and ma2 > ma3
+        1  // Tendance haussière
+    else if ma1 < ma2 and ma2 < ma3
+        -1  // Tendance baissière
+    else
+        0  // Tendance neutre
+
+// Fonction pour calculer la force de la tendance
+f_getTrendStrength(float ma1, float ma2, float ma3) =>
+    math.abs((ma1 - ma3) / ma3) * 100
+
+// ============================================================================
+// SECTION 3: CALCULS DES INDICATEURS / INDICATOR CALCULATIONS
+// ============================================================================
+
+// --- Moyennes Mobiles ---
+float ma1 = f_ma(close, maPeriod1, maType)
+float ma2 = f_ma(close, maPeriod2, maType)
+float ma3 = f_ma(close, maPeriod3, maType)
+
+// --- RSI ---
+float rsi = ta.rsi(close, rsiPeriod)
+bool rsiOverboughtSignal = rsi > rsiOverbought
+bool rsiOversoldSignal = rsi < rsiOversold
+
+// --- MACD ---
+[macdLine, macdSignalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+bool macdBullish = ta.crossover(macdLine, macdSignalLine)
+bool macdBearish = ta.crossunder(macdLine, macdSignalLine)
+
+// --- Tendance ---
+int trend = f_getTrend(ma1, ma2, ma3)
+float trendStrength = f_getTrendStrength(ma1, ma2, ma3)
+color trendColor = trend == 1 ? colorBullish : trend == -1 ? colorBearish : colorNeutral
+
+// --- Volume ---
+float volMA = ta.sma(volume, volumeMA)
+bool highVolume = volume > volMA * volumeMultiplier
+color volumeColor = close > open ? colorBullish : colorBearish
+
+// --- Support et Résistance (Pivot Points) ---
+float pivotHigh = ta.pivothigh(high, pivotLeftBars, pivotRightBars)
+float pivotLow = ta.pivotlow(low, pivotLeftBars, pivotRightBars)
+
+// --- Bollinger Bands ---
+float bbBasis = ta.sma(close, 20)
+float bbDev = ta.stdev(close, 20)
+float bbUpper = bbBasis + 2 * bbDev
+float bbLower = bbBasis - 2 * bbDev
+
+// --- ATR pour volatilité ---
+float atr = ta.atr(14)
+float atrPercent = (atr / close) * 100
+
+// ============================================================================
+// SECTION 4: SIGNAUX D'ENTRÉE/SORTIE / ENTRY/EXIT SIGNALS
+// ============================================================================
+
+// Signal d'achat (long)
+bool buySignal = ta.crossover(ma1, ma2) and trend == 1 and rsi < 70 and highVolume
+bool strongBuySignal = buySignal and macdBullish and rsiOversoldSignal
+
+// Signal de vente (short)
+bool sellSignal = ta.crossunder(ma1, ma2) and trend == -1 and rsi > 30 and highVolume
+bool strongSellSignal = sellSignal and macdBearish and rsiOverboughtSignal
+
+// Signal de sortie
+bool exitLongSignal = ta.crossunder(close, ma2) or rsiOverboughtSignal
+bool exitShortSignal = ta.crossover(close, ma2) or rsiOversoldSignal
+
+// ============================================================================
+// SECTION 5: ANALYSE MULTI-TIMEFRAME / MULTI-TIMEFRAME ANALYSIS
+// ============================================================================
+
+// Obtenir la tendance du timeframe supérieur
+string higherTF = timeframeInput == "" ? timeframe.period : timeframeInput
+float htfClose = request.security(syminfo.tickerid, higherTF, close)
+float htfMA = request.security(syminfo.tickerid, higherTF, f_ma(close, maPeriod2, maType))
+int htfTrend = htfClose > htfMA ? 1 : -1
+
+// Confirmation multi-timeframe
+bool mtfBullish = trend == 1 and htfTrend == 1
+bool mtfBearish = trend == -1 and htfTrend == -1
+
+// ============================================================================
+// SECTION 6: AFFICHAGE / PLOTTING
+// ============================================================================
+
+// --- Moyennes Mobiles ---
+plot(showTrend ? ma1 : na, "MA Rapide", color=color.new(color.blue, 0), linewidth=2)
+plot(showTrend ? ma2 : na, "MA Moyenne", color=color.new(color.orange, 0), linewidth=2)
+plot(showTrend ? ma3 : na, "MA Lente", color=color.new(color.purple, 0), linewidth=2)
+
+// --- Bollinger Bands ---
+p1 = plot(showTrend ? bbUpper : na, "BB Supérieure", color=color.new(color.gray, 70))
+p2 = plot(showTrend ? bbLower : na, "BB Inférieure", color=color.new(color.gray, 70))
+fill(p1, p2, color=color.new(color.gray, 90), title="BB Fill")
+
+// --- Support et Résistance ---
+plotshape(showSupRes and not na(pivotHigh), "Résistance", shape.triangledown, 
+          location.abovebar, color=color.new(color.red, 0), size=size.small)
+plotshape(showSupRes and not na(pivotLow), "Support", shape.triangleup, 
+          location.belowbar, color=color.new(color.green, 0), size=size.small)
+
+// --- Signaux d'Achat/Vente ---
+plotshape(showSignals and buySignal, "Signal Achat", shape.labelup, 
+          location.belowbar, color=colorBullish, text="ACHAT", textcolor=color.white, size=size.normal)
+plotshape(showSignals and strongBuySignal, "Signal Achat Fort", shape.labelup, 
+          location.belowbar, color=color.new(color.lime, 0), text="ACHAT FORT", textcolor=color.black, size=size.large)
+
+plotshape(showSignals and sellSignal, "Signal Vente", shape.labeldown, 
+          location.abovebar, color=colorBearish, text="VENTE", textcolor=color.white, size=size.normal)
+plotshape(showSignals and strongSellSignal, "Signal Vente Fort", shape.labeldown, 
+          location.abovebar, color=color.new(color.maroon, 0), text="VENTE FORT", textcolor=color.white, size=size.large)
+
+// --- Background de tendance ---
+bgcolor(showTrend ? color.new(trendColor, 95) : na, title="Tendance Background")
+
+// --- Coloration des bougies selon tendance ---
+barcolor(showTrend ? trendColor : na, title="Tendance Barcolor")
+
+// ============================================================================
+// SECTION 7: TABLEAU DE BORD / DASHBOARD
+// ============================================================================
+
+// Créer un tableau pour afficher les informations
+var table dashboard = table.new(position.top_right, 3, 10, 
+                                bgcolor=color.new(color.black, 80), 
+                                border_width=2, 
+                                border_color=color.new(color.gray, 50))
+
+if barstate.islast
+    // En-têtes
+    table.cell(dashboard, 0, 0, "Indicateur", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.cell(dashboard, 1, 0, "Valeur", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.cell(dashboard, 2, 0, "Signal", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    
+    // Tendance
+    string trendText = trend == 1 ? "Haussière" : trend == -1 ? "Baissière" : "Neutre"
+    table.cell(dashboard, 0, 1, "Tendance", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 1, trendText, text_color=trendColor, text_size=size.small)
+    table.cell(dashboard, 2, 1, str.tostring(math.round(trendStrength, 2)) + "%", text_color=color.white, text_size=size.small)
+    
+    // RSI
+    string rsiSignal = rsiOverboughtSignal ? "Suracheté" : rsiOversoldSignal ? "Survendu" : "Neutre"
+    color rsiColor = rsiOverboughtSignal ? colorBearish : rsiOversoldSignal ? colorBullish : colorNeutral
+    table.cell(dashboard, 0, 2, "RSI", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 2, str.tostring(math.round(rsi, 2)), text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 2, rsiSignal, text_color=rsiColor, text_size=size.small)
+    
+    // MACD
+    string macdSignalText = macdBullish ? "Achat" : macdBearish ? "Vente" : "Neutre"
+    color macdColor = macdBullish ? colorBullish : macdBearish ? colorBearish : colorNeutral
+    table.cell(dashboard, 0, 3, "MACD", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 3, str.tostring(math.round(macdHist, 4)), text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 3, macdSignalText, text_color=macdColor, text_size=size.small)
+    
+    // Volume
+    string volSignal = highVolume ? "Élevé" : "Normal"
+    table.cell(dashboard, 0, 4, "Volume", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 4, str.tostring(math.round(volume/1000, 0)) + "K", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 4, volSignal, text_color=highVolume ? color.yellow : color.white, text_size=size.small)
+    
+    // ATR / Volatilité
+    table.cell(dashboard, 0, 5, "Volatilité", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 5, str.tostring(math.round(atr, 4)), text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 5, str.tostring(math.round(atrPercent, 2)) + "%", text_color=color.white, text_size=size.small)
+    
+    // Multi-Timeframe
+    string mtfText = mtfBullish ? "Haussier" : mtfBearish ? "Baissier" : "Divergent"
+    color mtfColor = mtfBullish ? colorBullish : mtfBearish ? colorBearish : color.orange
+    table.cell(dashboard, 0, 6, "MTF Tendance", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 6, higherTF, text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 6, mtfText, text_color=mtfColor, text_size=size.small)
+    
+    // Prix actuel
+    table.cell(dashboard, 0, 7, "Prix", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 7, str.tostring(close), text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 7, str.tostring(math.round((close - open)/open * 100, 2)) + "%", 
+               text_color=close > open ? colorBullish : colorBearish, text_size=size.small)
+    
+    // Bollinger Position
+    float bbPosition = (close - bbLower) / (bbUpper - bbLower) * 100
+    string bbText = bbPosition > 80 ? "Haute" : bbPosition < 20 ? "Basse" : "Moyenne"
+    table.cell(dashboard, 0, 8, "BB Position", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 8, str.tostring(math.round(bbPosition, 0)) + "%", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 2, 8, bbText, text_color=color.white, text_size=size.small)
+    
+    // Signal Global
+    int signalScore = (trend == 1 ? 1 : trend == -1 ? -1 : 0) + 
+                      (macdBullish ? 1 : macdBearish ? -1 : 0) + 
+                      (rsiOversoldSignal ? 1 : rsiOverboughtSignal ? -1 : 0) + 
+                      (mtfBullish ? 1 : mtfBearish ? -1 : 0)
+    string globalSignal = signalScore >= 2 ? "ACHAT" : signalScore <= -2 ? "VENTE" : "NEUTRE"
+    color globalColor = signalScore >= 2 ? colorBullish : signalScore <= -2 ? colorBearish : colorNeutral
+    table.cell(dashboard, 0, 9, "SIGNAL GLOBAL", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.cell(dashboard, 1, 9, str.tostring(signalScore), text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.cell(dashboard, 2, 9, globalSignal, text_color=globalColor, text_size=size.normal, bgcolor=color.new(globalColor, 70))
+
+// ============================================================================
+// SECTION 8: ALERTES / ALERTS
+// ============================================================================
+
+// Alertes pour signaux d'achat/vente
+alertcondition(strongBuySignal, "Alerte Achat Fort", "Signal d'achat fort détecté! 🚀")
+alertcondition(strongSellSignal, "Alerte Vente Fort", "Signal de vente fort détecté! 📉")
+alertcondition(buySignal, "Alerte Achat", "Signal d'achat détecté")
+alertcondition(sellSignal, "Alerte Vente", "Signal de vente détecté")
+
+// Alertes RSI
+alertcondition(rsiOverboughtSignal, "Alerte RSI Suracheté", "RSI en zone de surachat")
+alertcondition(rsiOversoldSignal, "Alerte RSI Survendu", "RSI en zone de survente")
+
+// Alertes de croisement MA
+alertcondition(ta.crossover(ma1, ma2), "Alerte MA Cross Up", "Croisement haussier des moyennes mobiles")
+alertcondition(ta.crossunder(ma1, ma2), "Alerte MA Cross Down", "Croisement baissier des moyennes mobiles")
+
+// Alertes de volume
+alertcondition(highVolume and close > open, "Alerte Volume Haussier", "Volume élevé avec bougie haussière")
+alertcondition(highVolume and close < open, "Alerte Volume Baissier", "Volume élevé avec bougie baissière")
+
+// ============================================================================
+// FIN DU SCRIPT / END OF SCRIPT
+// ============================================================================
